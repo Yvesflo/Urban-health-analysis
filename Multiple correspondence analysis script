@@ -1,0 +1,104 @@
+# MULTIPLE CORRESPONDENCE ANALYSIS
+# Author: Yves Wasnyo MD MPH
+# MCA for categorical health behavior data
+
+# Load libraries
+library(FactoMineR)
+library(factoextra)
+library(ggplot2)
+library(dplyr)
+
+# Expected data structure:
+# All variables should be categorical/factor variables
+# Example: health_behavior, diet_category, activity_level, etc.
+
+# =============================================================================
+# 1. DATA PREPARATION
+# =============================================================================
+
+# Read data (adapt file path and variables)
+# data <- read.csv("your_mca_data.csv")
+
+# Select categorical variables for MCA
+mca_vars <- c("health_behavior", "diet_category", "activity_level", "smoking_status")
+mca_data <- data[, mca_vars]
+
+# Convert to factors
+mca_data[] <- lapply(mca_data, as.factor)
+
+# Remove duplicates
+mca_data <- mca_data[!duplicated(mca_data), ]
+
+print(paste("Final dataset dimensions:", nrow(mca_data), "x", ncol(mca_data)))
+
+# =============================================================================
+# 2. MCA ANALYSIS
+# =============================================================================
+
+# Perform MCA
+mca_result <- MCA(mca_data, ncp = 3, graph = FALSE)
+
+# Summary
+print(mca_result)
+
+# Eigenvalues
+eigenvalues <- get_eigenvalue(mca_result)
+print("Eigenvalues:")
+print(eigenvalues)
+
+# =============================================================================
+# 3. VISUALIZATION
+# =============================================================================
+
+# Scree plot
+fviz_screeplot(mca_result, addlabels = TRUE) +
+  labs(title = "MCA Scree Plot")
+
+# Biplot of variables
+fviz_mca_var(mca_result, 
+             repel = TRUE,
+             ggtheme = theme_minimal()) +
+  labs(title = "MCA Variable Categories")
+
+# Biplot of individuals
+fviz_mca_ind(mca_result, 
+             geom = "point",
+             alpha = 0.6,
+             ggtheme = theme_minimal()) +
+  labs(title = "MCA Individual Plot")
+
+# =============================================================================
+# 4. INTERPRETATION
+# =============================================================================
+
+# Variable contributions to dimensions
+var_contrib <- get_mca_var(mca_result)
+
+# Contributions to Dim 1
+fviz_contrib(mca_result, choice = "var", axes = 1, top = 10) +
+  labs(title = "Contribution to Dimension 1")
+
+# Contributions to Dim 2
+fviz_contrib(mca_result, choice = "var", axes = 2, top = 10) +
+  labs(title = "Contribution to Dimension 2")
+
+# =============================================================================
+# 5. CUSTOM VISUALIZATION
+# =============================================================================
+
+# Extract coordinates for custom plot
+var_coords <- as.data.frame(var_contrib$coord)
+var_coords$variable <- rownames(var_coords)
+
+# Create custom plot with better labeling
+ggplot(var_coords, aes(x = `Dim 1`, y = `Dim 2`)) +
+  geom_point(size = 3, color = "blue") +
+  geom_text(aes(label = variable), hjust = 0, vjust = 0, size = 3) +
+  theme_minimal() +
+  labs(title = "MCA Variable Coordinates",
+       x = paste("Dimension 1 (", round(eigenvalues[1, 2], 1), "%)"),
+       y = paste("Dimension 2 (", round(eigenvalues[2, 2], 1), "%)"))
+
+# Save results
+# write.csv(var_coords, "mca_variable_coordinates.csv", row.names = FALSE)
+# ggsave("mca_plot.png", width = 10, height = 8)
