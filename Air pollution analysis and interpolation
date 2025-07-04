@@ -1,0 +1,147 @@
+# AIR POLLUTION SPATIAL INTERPOLATION
+# Author: Yves Wasnyo MD MPH
+# Interpolate air pollution measurements across geographic areas
+
+# Load libraries
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(gstat)
+library(lubridate)
+
+# Expected data structure:
+# - datetime: timestamp
+# - pm2_5_raw_value: PM2.5 measurements
+# - Latitude, Longitude: coordinates
+# - site_name: monitoring station name
+
+# =============================================================================
+# 1. DATA PREPARATION
+# =============================================================================
+
+# Read data (adapt file path)
+air_pollution <- read.csv("your_air_pollution_data.csv")
+
+# Clean and aggregate daily data
+air_daily <- air_pollution %>%
+  filter(site_name != "") %>%
+  mutate(date = as.Date(datetime)) %>%
+  group_by(date, site_name) %>%
+  summarise(
+    pm25_daily = mean(pm2_5_raw_value, na.rm = TRUE),
+    lat = mean(Latitude, na.rm = TRUE),
+    lon = mean(Longitude, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Convert to spatial object
+air_spatial <- air_daily %>%
+  filter(!is.na(lat) & !is.na(lon) & !is.na(pm25_daily)) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# =============================================================================
+# 2. SPATIAL INTERPOLATION
+# =============================================================================
+
+# Function for spatial interpolation
+spatial_interpolate <- function(data, target_locations, date_filter) {
+  # Filter data for specific date
+  day_data <- data %>%
+    filter(date == date_filter) %>%
+    filter(!is.na(pm25_daily))
+  
+  # Need at least 3 stations for interpolation
+  if (nrow(day_data) >= 3) {
+    # Create gstat object
+    gs <- gstat(
+      formula = pm25_daily ~ 1,
+      locations = day_data,
+      nmax = 5,
+      maxdist = 3000,
+      set = list(idp = 2)  # inverse distance weighting
+    )
+    
+    # Predict at target locations
+    pred <- predict(gs, target_locations)
+    
+    return(data.frame(
+      date = date_filter,
+      pm25_predicted = pred$var1.pred,
+      prediction_variance = pred$var1.var
+    ))
+  }
+  
+  return(NULL)
+}
+
+# =============================================================================
+# 3. EXAMPLE INTERPOLATION
+# =============================================================================
+
+# Create example target locations (adapt to your study area)
+target_points <- data.frame(
+  lon = c(11.5, 11.6, 11.7),
+  lat = c(3.8, 3.9, 4.0)
+) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# Interpolate for specific date
+example_date <- as.Date("2024-02-15")
+interpolated <- spatial_interpolate(air_spatial, target_points, example_date)
+
+if (!is.null(interpolated)) {
+  print("Interpolation Results:")
+  print(interpolated)
+}
+
+# =============================================================================
+# 4. VISUALIZATION
+# =============================================================================
+
+# Plot monitoring stations and interpolated points
+day_data <- air_spatial %>% 
+  filter(date == example_date)
+
+if (nrow(day_data) > 0) {
+  # Basic plot
+  ggplot() +
+    geom_sf(data = day_data, aes(color = pm25_daily), size = 4) +
+    geom_sf(data = target_points, color = "red", size = 3, shape = 17) +
+    scale_color_viridis_c(name = "PM2.5 (μg/m³)") +
+    theme_minimal() +
+    labs(title = "PM2.5 Monitoring Stations and Interpolation Points",
+         subtitle = "Circles: Monitoring Stations, Triangles: Interpolated Points")
+}
+
+# =============================================================================
+# 5. TEMPORAL INTERPOLATION
+# =============================================================================
+
+# Fill gaps in time series using linear interpolation
+temporal_interpolate <- function(data, max_gap = 5) {
+  data %>%
+    group_by(site_name) %>%
+    arrange(date) %>%
+    mutate(
+      pm25_interpolated = zoo::na.approx(pm25_daily, maxgap = max_gap, na.rm = FALSE)
+    ) %>%
+    ungroup()
+}
+
+# Apply temporal interpolation
+air_temporal <- temporal_interpolate(air_daily)
+
+# Plot original vs interpolated data
+site_example <- unique(air_daily$site_name)[1]
+site_data <- air_temporal %>% filter(site_name == site_example)
+
+ggplot(site_data, aes(x = date)) +
+  geom_point(aes(y = pm25_daily, color = "Original"), alpha = 0.6) +
+  geom_line(aes(y = pm25_interpolated, color = "Interpolated"), alpha = 0.8) +
+  scale_color_manual(values = c("Original" = "blue", "Interpolated" = "red")) +
+  theme_minimal() +
+  labs(title = paste("PM2.5 Time Series -", site_example),
+       y = "PM2.5 (μg/m³)", color = "Data Type")
+
+# Save results
+# write.csv(air_temporal, "interpolated_air_pollution.csv", row.names = FALSE)
