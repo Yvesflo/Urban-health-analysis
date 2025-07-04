@@ -1,0 +1,143 @@
+# TIME SERIES ANALYSIS AND FORECASTING
+# Author: Yves Wasnyo MD MPH
+# ARIMA modeling for climate data forecasting
+
+# Load libraries
+library(tsibble)
+library(dplyr)
+library(fable)
+library(feasts)
+library(ggplot2)
+
+# Expected data structure:
+# - date: date column
+# - value: time series variable (e.g., rainfall, temperature)
+# - location: optional grouping variable
+
+# =============================================================================
+# 1. DATA PREPARATION
+# =============================================================================
+
+# Read data (adapt file path)
+# data <- read.csv("your_time_series_data.csv")
+
+# Convert to tsibble
+data_ts <- data %>%
+  mutate(date = as.Date(date)) %>%
+  as_tsibble(key = location, index = date)
+
+# Check for gaps
+print(paste("Has gaps:", has_gaps(data_ts)))
+
+# =============================================================================
+# 2. EXPLORATORY ANALYSIS
+# =============================================================================
+
+# Plot time series
+data_ts %>%
+  autoplot(value) +
+  facet_wrap(~ location, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Time Series Data", y = "Value")
+
+# Decomposition
+decomp <- data_ts %>%
+  model(stl = STL(value ~ trend() + season())) %>%
+  components()
+
+# Plot decomposition
+autoplot(decomp) +
+  labs(title = "Time Series Decomposition")
+
+# =============================================================================
+# 3. STATIONARITY TEST
+# =============================================================================
+
+# Augmented Dickey-Fuller test
+adf_test <- data_ts %>%
+  features(value, unitroot_kpss)
+
+print("Stationarity test results:")
+print(adf_test)
+
+# =============================================================================
+# 4. MODEL FITTING
+# =============================================================================
+
+# Fit ARIMA models
+models <- data_ts %>%
+  model(
+    auto_arima = ARIMA(value),
+    manual_arima = ARIMA(value ~ pdq(1,1,1) + PDQ(1,1,1))
+  )
+
+# Model comparison
+glance(models)
+
+# Select best model (lowest AIC)
+best_model <- models %>%
+  select(auto_arima)
+
+# Model summary
+report(best_model)
+
+# =============================================================================
+# 5. RESIDUAL ANALYSIS
+# =============================================================================
+
+# Check residuals
+residuals <- augment(best_model)
+
+# Plot residuals
+residuals %>%
+  autoplot(.innov) +
+  labs(title = "Model Residuals")
+
+# ACF of residuals
+residuals %>%
+  ACF(.innov) %>%
+  autoplot() +
+  labs(title = "ACF of Residuals")
+
+# Ljung-Box test
+residuals %>%
+  features(.innov, ljung_box, lag = 24)
+
+# =============================================================================
+# 6. FORECASTING
+# =============================================================================
+
+# Generate forecasts
+forecasts <- best_model %>%
+  forecast(h = "24 months")
+
+# Plot forecasts
+forecasts %>%
+  autoplot(data_ts) +
+  labs(title = "Time Series Forecast", y = "Value") +
+  theme_minimal()
+
+# Extract forecast values
+forecast_values <- forecasts %>%
+  as_tibble() %>%
+  select(location, date, .mean, .distribution)
+
+print("Forecast summary:")
+print(forecast_values)
+
+# =============================================================================
+# 7. MODEL ACCURACY
+# =============================================================================
+
+# Cross-validation (optional)
+# cv_results <- data_ts %>%
+#   stretch_tsibble(.init = 100) %>%
+#   model(ARIMA(value)) %>%
+#   forecast(h = 12) %>%
+#   accuracy(data_ts)
+# 
+# print("Cross-validation accuracy:")
+# print(cv_results)
+
+# Save results
+# write.csv(forecast_values, "time_series_forecasts.csv", row.names = FALSE)
