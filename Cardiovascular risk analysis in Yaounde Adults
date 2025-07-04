@@ -1,0 +1,130 @@
+# CARDIOVASCULAR RISK ANALYSIS
+# Author: Yves Wasnyo MD MPH
+# Ordinal logistic regression for cardiovascular risk assessment
+
+# Load libraries
+library(MASS)
+library(dplyr)
+library(car)
+library(corrplot)
+
+# Expected data structure:
+# - CardVascRisk_2: ordinal outcome variable (e.g., "Low", "Medium", "High")
+# - Continuous variables: age, BMI, blood pressure, etc.
+# - Categorical variables: gender, smoking, family history, etc.
+
+# =============================================================================
+# 1. DATA PREPARATION
+# =============================================================================
+
+# Convert outcome to ordered factor
+data$CardVascRisk_2 <- factor(data$CardVascRisk_2, ordered = TRUE)
+
+# Define variable lists (adapt to your data)
+continuous_vars <- c("age", "BMI", "systolic_BP", "diastolic_BP")
+categorical_vars <- c("gender", "smoking", "family_history", "diabetes")
+
+# Convert categorical variables to factors
+data[categorical_vars] <- lapply(data[categorical_vars], as.factor)
+
+# =============================================================================
+# 2. CORRELATION ANALYSIS
+# =============================================================================
+
+# Correlation matrix for continuous variables
+if (length(continuous_vars) > 1) {
+  cor_matrix <- cor(data[continuous_vars], use = "complete.obs")
+  print("Correlation Matrix:")
+  print(cor_matrix)
+  
+  # Visualize correlations
+  corrplot(cor_matrix, method = "color", type = "upper", 
+           tl.col = "black", tl.srt = 45, addCoef.col = "black")
+}
+
+# =============================================================================
+# 3. UNIVARIATE ANALYSIS
+# =============================================================================
+
+# Function for univariate analysis
+univariate_analysis <- function(var_name, data) {
+  formula <- as.formula(paste("CardVascRisk_2 ~", var_name))
+  model <- polr(formula, data = data, Hess = TRUE)
+  
+  # Calculate p-value
+  coef_summary <- summary(model)$coefficients
+  p_value <- pnorm(abs(coef_summary[1, "t value"]), lower.tail = FALSE) * 2
+  
+  # Calculate odds ratio
+  odds_ratio <- exp(coef(model))
+  
+  return(data.frame(
+    variable = var_name,
+    p_value = p_value,
+    odds_ratio = odds_ratio[1]
+  ))
+}
+
+# Run univariate analysis
+all_vars <- c(continuous_vars, categorical_vars)
+univariate_results <- do.call(rbind, lapply(all_vars, univariate_analysis, data = data))
+
+# Select variables with p < 0.25
+selected_vars <- univariate_results$variable[univariate_results$p_value < 0.25]
+print("Selected variables for multivariable model:")
+print(selected_vars)
+
+# =============================================================================
+# 4. MULTIVARIABLE MODEL
+# =============================================================================
+
+# Build multivariable model
+formula <- as.formula(paste("CardVascRisk_2 ~", paste(selected_vars, collapse = " + ")))
+multivariable_model <- polr(formula, data = data, Hess = TRUE)
+
+# Model summary
+summary_model <- summary(multivariable_model)
+print(summary_model)
+
+# Calculate p-values and odds ratios
+coef_data <- summary_model$coefficients
+p_values <- pnorm(abs(coef_data[, "t value"]), lower.tail = FALSE) * 2
+odds_ratios <- exp(coef_data[, "Value"])
+
+# Confidence intervals
+ci <- confint(multivariable_model)
+odds_ratios_ci <- exp(ci)
+
+# Results table
+results <- data.frame(
+  Variable = rownames(coef_data),
+  Coefficient = coef_data[, "Value"],
+  p_value = p_values,
+  OR = odds_ratios,
+  OR_lower = odds_ratios_ci[, 1],
+  OR_upper = odds_ratios_ci[, 2]
+)
+
+print("Final Model Results:")
+print(results)
+
+# =============================================================================
+# 5. MODEL VALIDATION
+# =============================================================================
+
+# McFadden's R-squared
+null_model <- polr(CardVascRisk_2 ~ 1, data = data, Hess = TRUE)
+mcfadden_r2 <- 1 - (logLik(multivariable_model) / logLik(null_model))
+print(paste("McFadden's R-squared:", round(mcfadden_r2, 4)))
+
+# Check multicollinearity (for continuous variables in the model)
+continuous_in_model <- intersect(selected_vars, continuous_vars)
+if (length(continuous_in_model) > 1) {
+  vif_model <- lm(formula, data = data)
+  vif_values <- vif(vif_model)
+  print("VIF values:")
+  print(vif_values)
+}
+
+# Save results
+# write.csv(results, "cardiovascular_risk_results.csv", row.names = FALSE)
