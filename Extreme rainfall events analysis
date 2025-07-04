@@ -1,0 +1,181 @@
+
+## 2. Clean Extreme Rainfall Analysis
+
+```r name=extreme_rainfall_analysis.R
+# EXTREME RAINFALL ANALYSIS
+# Author: Yves Wasnyo MD MPH
+# Simple script for analyzing extreme rainfall patterns
+
+# Load libraries
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(zoo)
+
+# Expected data structure:
+# - Small_area: geographic area name
+# - date: date column
+# - year, month: time components  
+# - meanRainfall: daily rainfall amount
+# - extreme_rainfall: TRUE/FALSE for extreme events
+
+# =============================================================================
+# 1. READ AND SUMMARIZE DATA
+# =============================================================================
+
+# Read data (adapt file path)
+df <- read_excel("your_rainfall_data.xlsx")
+
+# Basic info
+print(paste("Rows:", nrow(df)))
+print(paste("Columns:", ncol(df)))
+print("Areas:")
+print(unique(df$Small_area))
+
+# Summary by area
+area_summary <- df %>%
+  group_by(Small_area) %>%
+  summarise(
+    avg_rainfall = mean(meanRainfall, na.rm = TRUE),
+    extreme_days = sum(extreme_rainfall, na.rm = TRUE),
+    total_days = n(),
+    percent_extreme = (extreme_days / total_days) * 100
+  )
+
+print(area_summary)
+
+# =============================================================================
+# 2. COMPARATIVE ANALYSIS
+# =============================================================================
+
+# Detailed area statistics
+area_stats <- df %>%
+  group_by(Small_area) %>%
+  summarise(
+    avg_rainfall = mean(meanRainfall, na.rm = TRUE),
+    max_rainfall = max(meanRainfall, na.rm = TRUE),
+    total_days = n(),
+    extreme_days = sum(extreme_rainfall, na.rm = TRUE),
+    percent_extreme = (extreme_days / total_days) * 100,
+    median_rainfall = median(meanRainfall, na.rm = TRUE)
+  ) %>%
+  arrange(desc(avg_rainfall))
+
+# Plot average rainfall by area
+p1 <- ggplot(area_stats, aes(x = reorder(Small_area, -avg_rainfall), y = avg_rainfall)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Average Daily Rainfall by Area", x = "Area", y = "Rainfall (mm)")
+
+# Plot extreme days percentage
+p2 <- ggplot(area_stats, aes(x = reorder(Small_area, -percent_extreme), y = percent_extreme)) +
+  geom_bar(stat = "identity", fill = "salmon") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Percentage of Extreme Days by Area", x = "Area", y = "Percentage")
+
+print(p1)
+print(p2)
+
+# =============================================================================
+# 3. TEMPORAL TRENDS
+# =============================================================================
+
+# Annual statistics
+annual_stats <- df %>%
+  group_by(Small_area, year) %>%
+  summarise(
+    avg_rainfall = mean(meanRainfall, na.rm = TRUE),
+    total_rainfall = sum(meanRainfall, na.rm = TRUE),
+    extreme_days = sum(extreme_rainfall, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Plot annual trends
+p3 <- ggplot(annual_stats, aes(x = year, y = avg_rainfall, color = Small_area)) +
+  geom_line() +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Annual Rainfall Trends", x = "Year", y = "Average Rainfall (mm)")
+
+print(p3)
+
+# Calculate trend slopes
+trends <- annual_stats %>%
+  group_by(Small_area) %>%
+  summarise(
+    rainfall_trend = coef(lm(avg_rainfall ~ year))[2],
+    extreme_trend = coef(lm(extreme_days ~ year))[2]
+  )
+
+print(trends)
+
+# =============================================================================
+# 4. SEASONAL PATTERNS
+# =============================================================================
+
+# Monthly patterns
+monthly_stats <- df %>%
+  group_by(Small_area, month) %>%
+  summarise(
+    avg_rainfall = mean(meanRainfall, na.rm = TRUE),
+    extreme_days = sum(extreme_rainfall, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Plot seasonal patterns
+p4 <- ggplot(monthly_stats, aes(x = month, y = avg_rainfall, color = Small_area)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = 1:12) +
+  theme_minimal() +
+  labs(title = "Seasonal Rainfall Patterns", x = "Month", y = "Average Rainfall (mm)")
+
+print(p4)
+
+# =============================================================================
+# 5. EXTREME EVENT ANALYSIS
+# =============================================================================
+
+# Function to identify extreme events
+identify_extreme_events <- function(data) {
+  events <- rle(data$extreme_rainfall)
+  event_data <- data.frame(
+    length = events$lengths[events$values == TRUE],
+    start = cumsum(c(1, events$lengths))[which(events$values == TRUE)]
+  )
+  
+  if (nrow(event_data) > 0) {
+    event_data$total_rainfall <- sapply(1:nrow(event_data), function(i) {
+      sum(data$meanRainfall[event_data$start[i]:(event_data$start[i] + event_data$length[i] - 1)])
+    })
+    event_data$avg_intensity <- event_data$total_rainfall / event_data$length
+  }
+  
+  return(event_data)
+}
+
+# Analyze extreme events by area
+extreme_events <- df %>%
+  group_by(Small_area) %>%
+  do(events = identify_extreme_events(.))
+
+# Event summary
+event_summary <- extreme_events %>%
+  unnest(events) %>%
+  group_by(Small_area) %>%
+  summarise(
+    total_events = n(),
+    avg_duration = mean(length),
+    avg_intensity = mean(avg_intensity),
+    .groups = 'drop'
+  )
+
+print(event_summary)
+
+# Save results (optional)
+# write.csv(area_stats, "area_statistics.csv", row.names = FALSE)
+# write.csv(trends, "temporal_trends.csv", row.names = FALSE)
+# ggsave("rainfall_trends.png", p3, width = 10, height = 6)
